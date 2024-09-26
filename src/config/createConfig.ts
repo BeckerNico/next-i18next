@@ -50,20 +50,43 @@ export const createConfig = (userConfig: UserConfig): InternalConfig => {
       const path = require('path')
       const serverLocalePath = localePath
 
+      const prefix = userConfig?.interpolation?.prefix ?? '{{'
+      const suffix = userConfig?.interpolation?.suffix ?? '}}'
+      const lngPlaceholder = `${prefix}lng${suffix}`
+      const nsPlaceholder = `${prefix}ns${suffix}`
+
+      const getFilePath = (base: string): string => {
+        const defaultFile = `/${localeStructure}.${localeExtension}`
+        return path.join(base, defaultFile)
+      }
+
+      const replaceLng = (path: string, lng: string) => path
+        .replace(lngPlaceholder, lng)
+
+      const replaceNS = (path: string, ns: string) => path
+        .replace(nsPlaceholder, ns)
+
+      const assertPathExists = (path:string, errorMessage: string) => {
+        const defaultNSExists = fs.existsSync(path)
+        if (defaultNSExists) {
+          return
+        }
+        if (process.env.NODE_ENV === 'production') {
+          return
+        }
+        throw new Error(errorMessage)
+      }
+
       //
       // Validate defaultNS
       // https://github.com/isaachinman/next-i18next/issues/358
       //
       if (typeof defaultNS === 'string' && typeof lng !== 'undefined') {
-        const prefix = userConfig?.interpolation?.prefix ?? '{{'
-        const suffix = userConfig?.interpolation?.suffix ?? '}}'
-        const defaultLocaleStructure = localeStructure.replace(`${prefix}lng${suffix}`, lng).replace(`${prefix}ns${suffix}`, defaultNS)
-        const defaultFile = `/${defaultLocaleStructure}.${localeExtension}`
-        const defaultNSPath = path.join(localePath, defaultFile)
-        const defaultNSExists = fs.existsSync(defaultNSPath)
-        if (!defaultNSExists && process.env.NODE_ENV !== 'production') {
-          throw new Error(`Default namespace not found at ${defaultNSPath}`)
-        }
+        const defaultNSPathNotReplaced = getFilePath(localePath)
+        const defaultNSPathLng = replaceLng(defaultNSPathNotReplaced, lng)
+        const defaultNSPath = replaceNS(defaultNSPathLng, defaultNS)
+
+        assertPathExists(defaultNSPath, `Default namespace not found at ${defaultNSPath}`)
       }
 
       //
@@ -80,13 +103,53 @@ export const createConfig = (userConfig: UserConfig): InternalConfig => {
       if (!combinedConfig.ns && typeof lng !== 'undefined') {
         const unique = (list: string[]) => Array.from(new Set<string>(list))
         const getNamespaces = (locales: string[]): string[] => {
-          const getLocaleNamespaces = (p: string) =>
-            fs.readdirSync(p).map(
-              (file: string) => file.replace(`.${localeExtension}`, '')
-            )
+          const getLocaleNamespaces = (p: string, locale: string) => {
+            const filePath = getFilePath(p)
+            const filePathLng = replaceLng(filePath, locale)
+
+            const fileDir = path.dirname(filePath)
+            const fileDirLng = path.dirname(filePathLng)
+
+            assertPathExists(fileDirLng, `Namespace can not be a folder [${fileDirLng}]`)
+
+            const nsFiles = fs.readdirSync(fileDirLng)
+            const nsFilesWithoutExt = nsFiles.map((file:string) => file.replace(`.${localeExtension}`, ''))
+
+            //
+            // language is a folder => no need for a replacement in filename
+            //
+            if (fileDir.match(lngPlaceholder)) {
+              return nsFilesWithoutExt
+            }
+
+            const fileName = path.basename(filePath, `.${localeExtension}`)
+            const fileNameLng = path.basename(filePathLng, `.${localeExtension}`)
+
+            const filePathParts = fileName.split(nsPlaceholder)
+            const filePathLngParts = fileNameLng.split(nsPlaceholder)
+
+            let lngPart: string
+            filePathParts.forEach((part: string, index: number) => {
+              if (part.includes(lngPlaceholder)) {
+                lngPart = filePathLngParts[index]
+              }
+            })
+
+            return nsFilesWithoutExt
+              // language is part of filename
+              // proceed only with the files matching current locale
+              .filter((file: string) => file.includes(lngPart))
+              // extract namespace from filename by deleting everything else
+              .map((file: string) => {
+                for (const part of filePathLngParts) {
+                  file = file.replace(part, '')
+                }
+                return file
+              })
+          }
 
           const namespacesByLocale = locales
-            .map(locale => getLocaleNamespaces(path.resolve(process.cwd(), `${serverLocalePath}/${locale}`)))
+            .map((locale) => getLocaleNamespaces(path.resolve(process.cwd(), `${serverLocalePath}/`),locale))
 
           const allNamespaces = []
           for (const localNamespaces of namespacesByLocale) {

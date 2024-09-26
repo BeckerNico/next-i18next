@@ -47,7 +47,7 @@ describe('createConfig', () => {
         expect(config.use).toEqual([])
         expect(config.react?.useSuspense).toEqual(false)
 
-        expect(fs.existsSync).toHaveBeenCalledTimes(1)
+        expect(fs.existsSync).toHaveBeenCalledTimes(2)
         expect(fs.readdirSync).toHaveBeenCalledTimes(1)
       })
 
@@ -114,6 +114,18 @@ describe('createConfig', () => {
 
           expect(config.fallbackLng).toBe(false)
         })
+      })
+    })
+
+    describe('custom localStructure provided', () => {
+      it('returns a valid config when language is in filename', () => {
+        (fs.existsSync as jest.Mock).mockReturnValue(true);
+        (fs.readdirSync as jest.Mock).mockImplementation(() => ['common.en.json'])
+        const config = createConfig({ lng: 'en', localeStructure: '{{ns}}.{{lng}}' } as UserConfig)
+
+        expect((config.backend as any).addPath).toMatch('/public/locales/{{ns}}.{{lng}}.missing.json')
+        expect((config.backend as any).loadPath).toMatch('/public/locales/{{ns}}.{{lng}}.json')
+        expect(config.ns).toEqual(['common'])
       })
     })
 
